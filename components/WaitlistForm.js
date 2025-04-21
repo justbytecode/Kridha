@@ -1,152 +1,206 @@
-"use client"
+'use client';
 
-import { useState, useEffect } from "react"
-import { PayPalButtons } from "@paypal/react-paypal-js"
-import { Button } from "./ui/button"
-import { Input } from "./ui/input"
-import { Label } from "./ui/label"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./ui/card"
-import { motion, AnimatePresence } from "framer-motion"
-import { Check, Loader2, ShoppingBag, Mail, User, Globe, Store } from "lucide-react"
+import { useState, useEffect } from 'react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Check, Loader2, ShoppingBag, Mail, User, Globe, Store } from 'lucide-react';
 
 export default function WaitlistForm() {
   const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    shopifyStoreName: "",
-    websiteLink: "",
+    name: '',
+    email: '',
+    shopifyStoreName: '',
+    websiteLink: '',
     productCategory: [],
-  })
-  const [isPaid, setIsPaid] = useState(false)
-  const [error, setError] = useState("")
-  const [showPayPal, setShowPayPal] = useState(false)
-  const [isPayPalReady, setIsPayPalReady] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [activeField, setActiveField] = useState(null)
-  const [formStep, setFormStep] = useState(0)
+  });
+  const [isPaid, setIsPaid] = useState(false);
+  const [error, setError] = useState('');
+  const [paymentInitiated, setPaymentInitiated] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeField, setActiveField] = useState(null);
+  const [formStep, setFormStep] = useState(0);
 
-  const productCategories = ["Clothes", "Jewelry", "Sunglasses"]
+  const productCategories = ['Clothes', 'Jewelry', 'Sunglasses'];
 
   useEffect(() => {
-    if (showPayPal) {
-      console.log("PayPal buttons should render. showPayPal:", showPayPal)
-      setIsPayPalReady(true)
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentStatus = urlParams.get('payment');
+    if (paymentStatus === 'success') {
+      console.log('Payment successful, enabling submit');
+      setIsPaid(true);
+      setError('');
+      setFormStep(3);
+      setPaymentInitiated(false);
+      const savedData = sessionStorage.getItem('waitlistFormData');
+      if (savedData) {
+        setFormData(JSON.parse(savedData));
+      }
+      window.history.replaceState({}, document.title, '/waitlist');
+    } else if (paymentStatus === 'cancel') {
+      console.log('Payment cancelled');
+      setError('Payment was cancelled. Please try again.');
+      setPaymentInitiated(false);
+      setFormStep(3);
+      const savedData = sessionStorage.getItem('waitlistFormData');
+      if (savedData) {
+        setFormData(JSON.parse(savedData));
+      }
+      window.history.replaceState({}, document.title, '/waitlist');
     }
-  }, [showPayPal])
+  }, []);
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value })
-  }
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
 
   const handleCategoryChange = (category) => {
     setFormData((prev) => {
-      const currentCategories = prev.productCategory
+      const currentCategories = prev.productCategory;
       if (currentCategories.includes(category)) {
         return {
           ...prev,
           productCategory: currentCategories.filter((cat) => cat !== category),
-        }
+        };
       } else {
         return {
           ...prev,
           productCategory: [...currentCategories, category],
-        }
+        };
       }
-    })
-  }
+    });
+  };
 
-  const handlePayClick = () => {
-    if (!process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID) {
-      setError("PayPal configuration is missing. Please contact support.")
-      console.error("NEXT_PUBLIC_PAYPAL_CLIENT_ID is not set.")
-      return
+  const handlePayClick = async () => {
+    console.log('Pay button clicked');
+    if (!formData.name || !formData.email || !formData.shopifyStoreName || !formData.websiteLink) {
+      console.log('Validation failed: Missing required fields');
+      setError('Please fill out all required fields before payment.');
+      return;
     }
-    setShowPayPal(true)
-    setError("")
-    console.log("Pay to Join Waitlist clicked. Showing PayPal buttons.")
-  }
+    if (formData.productCategory.length === 0) {
+      console.log('Validation failed: No product category selected');
+      setError('Please select at least one product category.');
+      return;
+    }
+
+    console.log('Validation passed, saving form data');
+    sessionStorage.setItem('waitlistFormData', JSON.stringify(formData));
+    setPaymentInitiated(true);
+    setError('');
+
+    try {
+      console.log('Sending POST to /api/paypal/create-order');
+      const response = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('Received response:', response.status, response.statusText);
+      const data = await response.json();
+      console.log('Response data:', data);
+
+      if (!response.ok) {
+        console.error('Fetch error:', data.details);
+        throw new Error(data.details || 'Failed to create PayPal order');
+      }
+
+      if (data.approvalUrl) {
+        console.log('Redirecting to PayPal:', data.approvalUrl);
+        window.location.href = data.approvalUrl;
+      } else {
+        console.error('No approval URL in response');
+        throw new Error('No approval URL returned from PayPal');
+      }
+    } catch (error) {
+      console.error('Payment initiation error:', error.message);
+      setError(`Failed to initiate payment: ${error.message}. Please try again.`);
+      setPaymentInitiated(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!isPaid) {
-      setError("Please complete the payment first.")
-      return
-    }
-    if (formData.productCategory.length === 0) {
-      setError("Please select at least one product category.")
-      return
-    }
-    if (!formData.name || !formData.email || !formData.shopifyStoreName || !formData.websiteLink) {
-      setError("Please fill out all required fields.")
-      return
+      console.log('Submit blocked: Payment not completed');
+      setError('Please complete the payment first.');
+      return;
     }
 
-    setIsSubmitting(true)
+    console.log('Submitting form data:', formData);
+    setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/waitlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch('/api/waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
-      })
+      });
 
-      const result = await response.json()
+      const result = await response.json();
       if (result.success) {
-        alert("Successfully joined the waitlist! Check your email for the welcome message.")
-        setFormData({ name: "", email: "", shopifyStoreName: "", websiteLink: "", productCategory: [] })
-        setIsPaid(false)
-        setShowPayPal(false)
-        setIsPayPalReady(false)
-        setError("")
+        console.log('Form submitted successfully');
+        alert('Successfully joined the waitlist! Check your email for the welcome message.');
+        setFormData({ name: '', email: '', shopifyStoreName: '', websiteLink: '', productCategory: [] });
+        setIsPaid(false);
+        setPaymentInitiated(false);
+        setError('');
+        setFormStep(0);
+        sessionStorage.removeItem('waitlistFormData');
       } else {
-        setError(result.error || "Failed to join waitlist. Please try again.")
+        console.error('Form submission failed:', result.error);
+        setError(result.error || 'Failed to join waitlist. Please try again.');
       }
     } catch (error) {
-      console.error("Form submission error:", error)
-      setError("Failed to join waitlist. Please try again.")
+      console.error('Form submission error:', error.message);
+      setError('Failed to join waitlist. Please try again.');
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   const validateStep = () => {
     if (formStep === 0) {
       if (!formData.name || !formData.email) {
-        setError("Please fill out your name and email.")
-        return false
+        setError('Please fill out your name and email.');
+        return false;
       }
-      if (!formData.email.includes("@") || !formData.email.includes(".")) {
-        setError("Please enter a valid email address.")
-        return false
+      if (!formData.email.includes('@') || !formData.email.includes('.')) {
+        setError('Please enter a valid email address.');
+        return false;
       }
     } else if (formStep === 1) {
       if (!formData.shopifyStoreName || !formData.websiteLink) {
-        setError("Please fill out your store information.")
-        return false
+        setError('Please fill out your store information.');
+        return false;
       }
-      if (!formData.websiteLink.includes(".")) {
-        setError("Please enter a valid website URL.")
-        return false
+      if (!formData.websiteLink.includes('.')) {
+        setError('Please enter a valid website URL.');
+        return false;
       }
     } else if (formStep === 2) {
       if (formData.productCategory.length === 0) {
-        setError("Please select at least one product category.")
-        return false
+        setError('Please select at least one product category.');
+        return false;
       }
     }
-    setError("")
-    return true
-  }
+    setError('');
+    return true;
+  };
 
   const nextStep = () => {
     if (validateStep()) {
-      setFormStep(formStep + 1)
+      setFormStep(formStep + 1);
     }
-  }
+  };
 
   const prevStep = () => {
-    setFormStep(formStep - 1)
-    setError("")
-  }
+    setFormStep(formStep - 1);
+    setError('');
+  };
 
   return (
     <motion.div
@@ -172,15 +226,14 @@ export default function WaitlistForm() {
             </CardDescription>
           </motion.div>
 
-          {/* Progress indicator */}
           <div className="flex justify-between mt-6 mb-2">
             {[0, 1, 2, 3].map((step) => (
               <motion.div
                 key={step}
                 className={`h-1 rounded-full ${
-                  step <= formStep ? "bg-gradient-to-r from-purple-500 to-pink-500" : "bg-gray-700"
+                  step <= formStep ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-gray-700'
                 }`}
-                style={{ width: "23%" }}
+                style={{ width: '23%' }}
                 initial={{ scaleX: 0 }}
                 animate={{ scaleX: step <= formStep ? 1 : 0 }}
                 transition={{ duration: 0.5, delay: step * 0.1 }}
@@ -188,10 +241,10 @@ export default function WaitlistForm() {
             ))}
           </div>
           <div className="flex justify-between text-xs text-gray-500">
-            <span className={formStep >= 0 ? "text-purple-400" : ""}>Personal</span>
-            <span className={formStep >= 1 ? "text-purple-400" : ""}>Store</span>
-            <span className={formStep >= 2 ? "text-purple-400" : ""}>Products</span>
-            <span className={formStep >= 3 ? "text-purple-400" : ""}>Payment</span>
+            <span className={formStep >= 0 ? 'text-purple-400' : ''}>Personal</span>
+            <span className={formStep >= 1 ? 'text-purple-400' : ''}>Store</span>
+            <span className={formStep >= 2 ? 'text-purple-400' : ''}>Products</span>
+            <span className={formStep >= 3 ? 'text-purple-400' : ''}>Payment</span>
           </div>
         </CardHeader>
 
@@ -213,7 +266,7 @@ export default function WaitlistForm() {
                   </Label>
                   <div
                     className={`relative transition-all duration-300 ${
-                      activeField === "name" ? "transform scale-[1.02]" : ""
+                      activeField === 'name' ? 'transform scale-[1.02]' : ''
                     }`}
                   >
                     <Input
@@ -221,7 +274,7 @@ export default function WaitlistForm() {
                       name="name"
                       value={formData.name}
                       onChange={handleChange}
-                      onFocus={() => setActiveField("name")}
+                      onFocus={() => setActiveField('name')}
                       onBlur={() => setActiveField(null)}
                       required
                       className="bg-gray-800/50 border-gray-700 focus:border-purple-500 text-white placeholder:text-gray-500 pl-10"
@@ -238,7 +291,7 @@ export default function WaitlistForm() {
                   </Label>
                   <div
                     className={`relative transition-all duration-300 ${
-                      activeField === "email" ? "transform scale-[1.02]" : ""
+                      activeField === 'email' ? 'transform scale-[1.02]' : ''
                     }`}
                   >
                     <Input
@@ -247,7 +300,7 @@ export default function WaitlistForm() {
                       type="email"
                       value={formData.email}
                       onChange={handleChange}
-                      onFocus={() => setActiveField("email")}
+                      onFocus={() => setActiveField('email')}
                       onBlur={() => setActiveField(null)}
                       required
                       className="bg-gray-800/50 border-gray-700 focus:border-purple-500 text-white placeholder:text-gray-500 pl-10"
@@ -275,7 +328,7 @@ export default function WaitlistForm() {
                   </Label>
                   <div
                     className={`relative transition-all duration-300 ${
-                      activeField === "shopifyStoreName" ? "transform scale-[1.02]" : ""
+                      activeField === 'shopifyStoreName' ? 'transform scale-[1.02]' : ''
                     }`}
                   >
                     <Input
@@ -283,7 +336,7 @@ export default function WaitlistForm() {
                       name="shopifyStoreName"
                       value={formData.shopifyStoreName}
                       onChange={handleChange}
-                      onFocus={() => setActiveField("shopifyStoreName")}
+                      onFocus={() => setActiveField('shopifyStoreName')}
                       onBlur={() => setActiveField(null)}
                       required
                       className="bg-gray-800/50 border-gray-700 focus:border-purple-500 text-white placeholder:text-gray-500 pl-10"
@@ -300,7 +353,7 @@ export default function WaitlistForm() {
                   </Label>
                   <div
                     className={`relative transition-all duration-300 ${
-                      activeField === "websiteLink" ? "transform scale-[1.02]" : ""
+                      activeField === 'websiteLink' ? 'transform scale-[1.02]' : ''
                     }`}
                   >
                     <Input
@@ -308,7 +361,7 @@ export default function WaitlistForm() {
                       name="websiteLink"
                       value={formData.websiteLink}
                       onChange={handleChange}
-                      onFocus={() => setActiveField("websiteLink")}
+                      onFocus={() => setActiveField('websiteLink')}
                       onBlur={() => setActiveField(null)}
                       required
                       className="bg-gray-800/50 border-gray-700 focus:border-purple-500 text-white placeholder:text-gray-500 pl-10"
@@ -343,8 +396,8 @@ export default function WaitlistForm() {
                           relative flex items-center p-4 rounded-lg border cursor-pointer transition-all
                           ${
                             formData.productCategory.includes(category)
-                              ? "border-purple-500 bg-purple-900/20"
-                              : "border-gray-700 bg-gray-800/30 hover:border-gray-600"
+                              ? 'border-purple-500 bg-purple-900/20'
+                              : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
                           }
                         `}
                         onClick={() => handleCategoryChange(category)}
@@ -361,10 +414,10 @@ export default function WaitlistForm() {
                         <div className="flex items-center">
                           <div
                             className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
-                              formData.productCategory.includes(category) ? "bg-purple-500" : "bg-gray-700"
+                              formData.productCategory.includes(category) ? 'bg-purple-500' : 'bg-gray-700'
                             }`}
                           >
-                            {category === "Clothes" && (
+                            {category === 'Clothes' && (
                               <svg
                                 className="w-5 h-5 text-white"
                                 fill="none"
@@ -380,7 +433,7 @@ export default function WaitlistForm() {
                                 />
                               </svg>
                             )}
-                            {category === "Jewelry" && (
+                            {category === 'Jewelry' && (
                               <svg
                                 className="w-5 h-5 text-white"
                                 fill="none"
@@ -396,7 +449,7 @@ export default function WaitlistForm() {
                                 />
                               </svg>
                             )}
-                            {category === "Sunglasses" && (
+                            {category === 'Sunglasses' && (
                               <svg
                                 className="w-5 h-5 text-white"
                                 fill="none"
@@ -418,9 +471,9 @@ export default function WaitlistForm() {
                               {category}
                             </Label>
                             <p className="text-xs text-gray-400">
-                              {category === "Clothes" && "Apparel, footwear, accessories"}
-                              {category === "Jewelry" && "Rings, necklaces, earrings"}
-                              {category === "Sunglasses" && "Eyewear and frames"}
+                              {category === 'Clothes' && 'Apparel, footwear, accessories'}
+                              {category === 'Jewelry' && 'Rings, necklaces, earrings'}
+                              {category === 'Sunglasses' && 'Eyewear and frames'}
                             </p>
                           </div>
                         </div>
@@ -462,7 +515,7 @@ export default function WaitlistForm() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Categories:</span>
-                      <span className="text-white font-medium">{formData.productCategory.join(", ")}</span>
+                      <span className="text-white font-medium">{formData.productCategory.join(', ')}</span>
                     </div>
                   </div>
                 </div>
@@ -476,10 +529,9 @@ export default function WaitlistForm() {
                     <div className="text-2xl font-bold text-white">$9</div>
                   </div>
 
-                  {!showPayPal && (
+                  {!paymentInitiated && (
                     <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                       <Button
-                        type="button"
                         onClick={handlePayClick}
                         className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-medium py-2 rounded-lg transition-all"
                       >
@@ -488,96 +540,29 @@ export default function WaitlistForm() {
                     </motion.div>
                   )}
 
-                  {showPayPal && isPayPalReady ? (
-                    <div className="p-4 bg-gray-800/80 rounded-lg border border-gray-700">
-                      <PayPalButtons
-                        createOrder={async () => {
-                          try {
-                            console.log("Creating PayPal order...")
-                            const res = await fetch("/api/paypal/create-order", { method: "POST" })
-                            if (!res.ok) {
-                              throw new Error(`Failed to create order: ${res.statusText}`)
-                            }
-                            const { id } = await res.json()
-                            console.log("PayPal order created with ID:", id)
-                            return id
-                          } catch (error) {
-                            console.error("Create order error:", error)
-                            setError("Failed to initiate payment. Please try again.")
-                            throw error
-                          }
-                        }}
-                        onApprove={async (data) => {
-                          try {
-                            console.log("Capturing PayPal order:", data.orderID)
-                            const res = await fetch("/api/paypal/capture-order", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ orderID: data.orderID }),
-                            })
-                            if (!res.ok) {
-                              throw new Error(`Failed to capture order: ${res.statusText}`)
-                            }
-                            const result = await res.json()
-                            console.log("Capture result:", result)
-                            if (result.status === "COMPLETED") {
-                              setIsPaid(true)
-                              setError("")
-                              console.log("Payment successful. Submit button enabled.")
-                            } else {
-                              setIsPaid(false)
-                              setError("Payment failed. Please try again.")
-                              console.log("Payment not completed:", result.status)
-                            }
-                          } catch (error) {
-                            console.error("Capture order error:", error)
-                            setIsPaid(false)
-                            setError("Payment failed. Please try again.")
-                          }
-                        }}
-                        onError={(err) => {
-                          console.error("PayPal Buttons error:", err)
-                          setIsPaid(false)
-                          setError("Payment failed. Please try again.")
-                        }}
-                        onCancel={() => {
-                          console.log("Payment cancelled by user.")
-                          setIsPaid(false)
-                          setError("Payment was cancelled. Please try again.")
-                        }}
-                        style={{
-                          layout: "vertical",
-                          color: "gold",
-                          shape: "rect",
-                          label: "pay",
-                        }}
-                      />
+                  {paymentInitiated && !isPaid && (
+                    <div className="flex items-center justify-center p-4">
+                      <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
+                      <span className="ml-2 text-gray-400">Redirecting to PayPal for payment...</span>
                     </div>
-                  ) : (
-                    showPayPal && (
-                      <div className="flex items-center justify-center p-4">
-                        <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
-                        <span className="ml-2 text-gray-400">Loading PayPal payment...</span>
+                  )}
+
+                  {isPaid && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-green-900/20 border border-green-800 rounded-lg p-4 flex items-center"
+                    >
+                      <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center mr-3">
+                        <Check className="w-5 h-5 text-white" />
                       </div>
-                    )
+                      <div>
+                        <h3 className="text-green-300 font-medium">Payment Successful!</h3>
+                        <p className="text-green-400 text-sm">Click submit to complete your registration.</p>
+                      </div>
+                    </motion.div>
                   )}
                 </div>
-
-                {isPaid && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-green-900/20 border border-green-800 rounded-lg p-4 flex items-center"
-                  >
-                    <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center mr-3">
-                      <Check className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <h3 className="text-green-300 font-medium">Payment Successful!</h3>
-                      <p className="text-green-400 text-sm">Click submit to complete your registration.</p>
-                    </div>
-                  </motion.div>
-                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -622,8 +607,8 @@ export default function WaitlistForm() {
                   disabled={!isPaid || isSubmitting}
                   className={`py-2 rounded-lg transition-all flex items-center justify-center ${
                     isPaid
-                      ? "bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
-                      : "bg-gray-700 text-gray-400 cursor-not-allowed"
+                      ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white'
+                      : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   }`}
                 >
                   {isSubmitting ? (
@@ -639,7 +624,7 @@ export default function WaitlistForm() {
                           Submit
                         </>
                       ) : (
-                        "Submit"
+                        'Submit'
                       )}
                     </>
                   )}
@@ -650,5 +635,5 @@ export default function WaitlistForm() {
         </CardContent>
       </Card>
     </motion.div>
-  )
+  );
 }
