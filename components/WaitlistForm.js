@@ -260,7 +260,7 @@ export default function WaitlistForm() {
                 className="space-y-4"
               >
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-gray-300 flex items-center">
+                  <Label htmlFor="name" className="text-gray-100 flex items-center">
                     <User className="w-4 h-4 mr-2 text-purple-400" />
                     Full Name
                   </Label>
