@@ -22,6 +22,8 @@ export default function WaitlistForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeField, setActiveField] = useState(null);
   const [formStep, setFormStep] = useState(0);
+  const [orderId, setOrderId] = useState(null);
+  const [razorpayScriptLoaded, setRazorpayScriptLoaded] = useState(false);
 
   const productCategories = ['Clothes', 'Jewelry', 'Sunglasses'];
 
@@ -50,6 +52,24 @@ export default function WaitlistForm() {
       }
       window.history.replaceState({}, document.title, '/waitlist');
     }
+
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => {
+      console.log('Razorpay checkout script loaded');
+      setRazorpayScriptLoaded(true);
+    };
+    script.onerror = () => {
+      console.error('Failed to load Razorpay checkout script');
+      setError('Failed to load payment gateway. Please try again later.');
+      setPaymentInitiated(false);
+    };
+    document.body.appendChild(script);
+
+    return () => {
+      document.body.removeChild(script);
+    };
   }, []);
 
   const handleChange = (e) => {
@@ -74,6 +94,7 @@ export default function WaitlistForm() {
   };
 
   const handlePayClick = async () => {
+    console.log('Environment variables:', process.env);
     console.log('Pay button clicked');
     if (!formData.name || !formData.email || !formData.shopifyStoreName || !formData.websiteLink) {
       console.log('Validation failed: Missing required fields');
@@ -86,14 +107,26 @@ export default function WaitlistForm() {
       return;
     }
 
+    if (!razorpayScriptLoaded) {
+      console.error('Razorpay script not loaded yet');
+      setError('Payment gateway is loading. Please wait and try again.');
+      return;
+    }
+
+    if (!process.env.RAZORPAY_KEY_ID) {
+      console.error('Razorpay key ID is missing. Please set RAZORPAY_KEY_ID in .env.');
+      setError('Payment configuration error. Please contact support.');
+      return;
+    }
+
     console.log('Validation passed, saving form data');
     sessionStorage.setItem('waitlistFormData', JSON.stringify(formData));
     setPaymentInitiated(true);
     setError('');
 
     try {
-      console.log('Sending POST to /api/paypal/create-order');
-      const response = await fetch('/api/paypal/create-order', {
+      console.log('Sending POST to /api/razorpay/create-order');
+      const response = await fetch('/api/razorpay/create-order', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -106,20 +139,77 @@ export default function WaitlistForm() {
 
       if (!response.ok) {
         console.error('Fetch error:', data.details);
-        throw new Error(data.details || 'Failed to create PayPal order');
+        throw new Error(data.details || 'Failed to create Razorpay order');
       }
 
-      if (data.approvalUrl) {
-        console.log('Redirecting to PayPal:', data.approvalUrl);
-        window.location.href = data.approvalUrl;
+      if (data.orderId) {
+        setOrderId(data.orderId);
+        const options = {
+          key: process.env.RAZORPAY_KEY_ID,
+          amount: data.amount,
+          currency: data.currency,
+          order_id: data.orderId,
+          name: 'Kridha Virtual Try-On Waitlist',
+          description: 'Payment for waitlist access',
+          handler: async (response) => {
+            console.log('Payment response:', response);
+            try {
+              const verifyResponse = await fetch('/api/razorpay/capture-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
+                }),
+              });
+              const verifyData = await verifyResponse.json();
+              if (verifyData.success) {
+                console.log('Payment verification successful:', verifyData);
+                window.location.href = process.env.NEXT_PUBLIC_RETURN_URL;
+              } else {
+                throw new Error(verifyData.error || 'Payment verification failed');
+              }
+            } catch (error) {
+              console.error('Payment verification error:', error.message);
+              setError(`Payment failed: ${error.message}. Please try again.`);
+              setPaymentInitiated(false);
+              setIsPaid(false); // Ensure isPaid is false on failure
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              console.log('Payment modal dismissed');
+              setError('Payment was cancelled. Please try again.');
+              setPaymentInitiated(false);
+              setIsPaid(false); // Reset isPaid if user cancels
+            },
+          },
+          prefill: {
+            name: formData.name,
+            email: formData.email,
+          },
+          theme: {
+            color: '#7e22ce',
+          },
+        };
+        const razorpayInstance = new window.Razorpay(options);
+        razorpayInstance.on('payment.failed', (response) => {
+          console.error('Payment failed:', response.error);
+          setError(`Payment failed: ${response.error.description}. Please try again.`);
+          setPaymentInitiated(false);
+          setIsPaid(false); // Reset isPaid on payment failure
+        });
+        razorpayInstance.open();
       } else {
-        console.error('No approval URL in response');
-        throw new Error('No approval URL returned from PayPal');
+        console.error('No order ID in response');
+        throw new Error('No order ID returned from Razorpay');
       }
     } catch (error) {
       console.error('Payment initiation error:', error.message);
       setError(`Failed to initiate payment: ${error.message}. Please try again.`);
       setPaymentInitiated(false);
+      setIsPaid(false); // Reset isPaid on error
     }
   };
 
@@ -260,7 +350,7 @@ export default function WaitlistForm() {
                 className="space-y-4"
               >
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-gray-100 flex items-center">
+                  <Label htmlFor="name" className="text-gray-300 flex items-center">
                     <User className="w-4 h-4 mr-2 text-purple-400" />
                     Full Name
                   </Label>
@@ -526,7 +616,7 @@ export default function WaitlistForm() {
                       <h3 className="text-lg font-medium text-white">Waitlist Fee</h3>
                       <p className="text-sm text-gray-400">One-time payment for early access</p>
                     </div>
-                    <div className="text-2xl font-bold text-white">$9</div>
+                    <div className="text-2xl font-bold text-white">₹149</div>
                   </div>
 
                   {!paymentInitiated && (
@@ -543,7 +633,7 @@ export default function WaitlistForm() {
                   {paymentInitiated && !isPaid && (
                     <div className="flex items-center justify-center p-4">
                       <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
-                      <span className="ml-2 text-gray-400">Redirecting to PayPal for payment...</span>
+                      <span className="ml-2 text-gray-400">Processing payment with Razorpay...</span>
                     </div>
                   )}
 

@@ -23,9 +23,9 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-                <PayPalWrapper>
+                
         {children}
-        </PayPalWrapper>
+        
       </body>
     </html>
   );
